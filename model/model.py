@@ -101,12 +101,3 @@ def real_init_weights(m):
                 real_init_weights(mini_m)
         else:
             print('unkonwn module', m)
-
-            torch.nn.init.constant_(m.weight, 1)
-            torch.nn.init.constant_(m.bias, 0)
-        elif isinstance(m,torch.nn.Module):
-            for mini_m in m.children():
-                real_init_weights(mini_m)
-        else:
-            print('unkonwn module', m)
->>>>>>> d175ba8a15a74cff363e8da114147f44311bfb42
