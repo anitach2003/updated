@@ -30,7 +30,7 @@ def get_loss_dict(cfg):
     loss_dict = {
         'name': ['cls_loss', 'relation_loss', 'relation_dis','mean_loss_row', ],
         'op': [SoftmaxFocalLoss(2, ignore_lb=-1), ParsingRelationLoss(), ParsingRelationDis(), MeanLoss(),],
-        'weight': [1.0,0.0,0.0,0.05, ],
+        'weight': [1.0,0.5,0.05,0.05, ],
         'data_src': [('cls_out', 'cls_label'), ('cls_out',), ('cls_out',),('cls_out', 'cls_label'), ]
     }
 
@@ -133,4 +133,5 @@ class CosineAnnealingLR:
 
 
         
+
 
