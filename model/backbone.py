@@ -126,11 +126,3 @@ if __name__ == "__main__":
     x = torch.zeros((1,3,288,800)).cuda() + 1
     out = model(x)
 
-
-if __name__ == "__main__":
-    torch.backends.cudnn.benchmark = True
-    model = VisionTransformer('vit_b_16').cuda()
-    x = torch.zeros((1,3,288,800)).cuda() + 1
-    out = model(x)
->>>>>>> d175ba8a15a74cff363e8da114147f44311bfb42
-    print(out.size())
