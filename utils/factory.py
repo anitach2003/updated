@@ -1,5 +1,5 @@
 
-from utils.loss import SoftmaxFocalLoss, ParsingRelationLoss, ParsingRelationDis, MeanLoss, TokenSegLoss, VarLoss, EMDLoss, RegLoss
+from utils.loss import SoftmaxFocalLoss, ParsingRelationLoss, ParsingRelationDis
 from utils.metrics import MultiLabelAcc, AccTopk, Metric_mIoU
 from utils.dist_utils import DistSummaryWriter
 
@@ -26,20 +26,16 @@ def get_scheduler(optimizer, cfg, iters_per_epoch):
     return scheduler
 
 def get_loss_dict(cfg):
+
     loss_dict = {
-            'name': ['cls_loss', 'seg_loss'],
-            'op': [SoftmaxFocalLoss(2),torch.nn.CrossEntropyLoss()],
-            'weight': [1.0, 1.0],
-            'data_src': [('cls_out', 'cls_label'), ('seg_out', 'seg_label')]
-        }
-  #  loss_dict = {
-  #      'name': ['cls_loss', 'relation_loss', 'relation_dis','mean_loss_row', ],
-  #      'op': [SoftmaxFocalLoss(2, ignore_lb=-1), ParsingRelationLoss(), ParsingRelationDis(), MeanLoss(),],
-  #      'weight': [1.0,0.5,0.05,0.05, ],
- #       'data_src': [('cls_out', 'cls_label'), ('cls_out',), ('cls_out',),('cls_out', 'cls_label'), ]
-  #  }
+        'name': ['cls_loss', ],
+        'op': [SoftmaxFocalLoss(2), ],
+        'weight': [1.0, ],
+        'data_src': [('cls_out', 'cls_label'), ]
+    }
 
     return loss_dict
+
 def get_loss_dict_seg(cfg):
 
     loss_dict = {
@@ -135,10 +131,4 @@ class CosineAnnealingLR:
         for group, lr in zip(self.optimizer.param_groups, self.base_lr):
             group['lr'] = self.eta_min + (lr - self.eta_min) * (1 + math.cos(math.pi * self.iters / self.T_max)) / 2
 
-
         
-
-
-
-
-
