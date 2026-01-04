@@ -26,13 +26,18 @@ def get_scheduler(optimizer, cfg, iters_per_epoch):
     return scheduler
 
 def get_loss_dict(cfg):
-
     loss_dict = {
-        'name': ['cls_loss', 'relation_loss', 'relation_dis','mean_loss_row', ],
-        'op': [SoftmaxFocalLoss(2, ignore_lb=-1), ParsingRelationLoss(), ParsingRelationDis(), MeanLoss(),],
-        'weight': [1.0,0.5,0.05,0.05, ],
-        'data_src': [('cls_out', 'cls_label'), ('cls_out',), ('cls_out',),('cls_out', 'cls_label'), ]
-    }
+            'name': ['cls_loss', 'seg_loss'],
+            'op': [SoftmaxFocalLoss(2),torch.nn.CrossEntropyLoss()],
+            'weight': [1.0, 1.0],
+            'data_src': [('cls_out', 'cls_label'), ('seg_out', 'seg_label')]
+        }
+  #  loss_dict = {
+  #      'name': ['cls_loss', 'relation_loss', 'relation_dis','mean_loss_row', ],
+  #      'op': [SoftmaxFocalLoss(2, ignore_lb=-1), ParsingRelationLoss(), ParsingRelationDis(), MeanLoss(),],
+  #      'weight': [1.0,0.5,0.05,0.05, ],
+ #       'data_src': [('cls_out', 'cls_label'), ('cls_out',), ('cls_out',),('cls_out', 'cls_label'), ]
+  #  }
 
     return loss_dict
 def get_loss_dict_seg(cfg):
@@ -132,6 +137,7 @@ class CosineAnnealingLR:
 
 
         
+
 
 
 
