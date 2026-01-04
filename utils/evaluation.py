@@ -1,130 +1,134 @@
-import numpy as np
-import json
-from scipy import special
-from IPython import embed
-def send_text_to_telegram(bot_token, chat_id, message):
-    url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
-    response = requests.post(
-        url,
-        data={
-            'chat_id': chat_id,
-            'text': message
-        }
-    )
-    
-    # Check the response
-    if response.status_code == 200:
-        print("Message sent successfully!")
+
+from utils.loss import SoftmaxFocalLoss, ParsingRelationLoss, ParsingRelationDis
+from utils.metrics import MultiLabelAcc, AccTopk, Metric_mIoU
+from utils.dist_utils import DistSummaryWriter
+
+import torch
+
+def get_optimizer(net,cfg):
+    training_params = filter(lambda p: p.requires_grad, net.parameters())
+    if cfg.optimizer == 'Adam':
+        optimizer = torch.optim.Adam(training_params, lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
+    elif cfg.optimizer == 'SGD':
+        optimizer = torch.optim.SGD(training_params, lr=cfg.learning_rate, momentum=cfg.momentum,
+                                    weight_decay=cfg.weight_decay)
     else:
-        print("Failed to send message:", response.text)
-import requests
-import os
-BOT_TOKEN = '7651391280:AAEqT4XRPZZTQNjyQvx_2FzRUNKDdc387BU'
-CHAT_ID = '-134642039'
+        raise NotImplementedError
+    return optimizer
 
-color_list = [(0,0,225), (255,0,0), (0,225,0), (255,0,225), (255,255,225), (0,255,255), (255,255,0), (125,255,255)]
-thickness_list = [1, 3, 5, 7, 9, 11, 13, 15]
-thickness_list.reverse()
+def get_scheduler(optimizer, cfg, iters_per_epoch):
+    if cfg.scheduler == 'multi':
+        scheduler = MultiStepLR(optimizer, cfg.steps, cfg.gamma, iters_per_epoch, cfg.warmup, iters_per_epoch if cfg.warmup_iters is None else cfg.warmup_iters)
+    elif cfg.scheduler == 'cos':
+        scheduler = CosineAnnealingLR(optimizer, cfg.epoch * iters_per_epoch, eta_min = 0, warmup = cfg.warmup, warmup_iters = cfg.warmup_iters)
+    else:
+        raise NotImplementedError
+    return scheduler
 
-def grid_2_inter(out, griding_num):
+def get_loss_dict(cfg):
 
-    out = out.data.cpu().numpy()
-    out_loc = np.argmax(out,axis=0)
+    loss_dict = {
+        'name': ['cls_loss', ],
+        'op': [SoftmaxFocalLoss(2), ],
+        'weight': [1.0, ],
+        'data_src': [('cls_out', 'cls_label'), ]
+    }
 
-    prob = special.softmax(out[:-1, :, :], axis=0)
-    idx = np.arange(griding_num)
-    idx = idx.reshape(-1, 1, 1)
+    return loss_dict
 
-    loc = np.sum(prob * idx, axis=0)
+def get_loss_dict_seg(cfg):
 
-    loc[out_loc == griding_num] = griding_num
-    out_loc = loc
+    loss_dict = {
+        'name': ['seg_loss', ],
+        'op': [torch.nn.CrossEntropyLoss(), ],
+        'weight': [1.0, ],
+        'data_src': [('seg_out', 'seg_label'), ]
+    }
 
-    lanes = []
-    for i in range(out_loc.shape[1]):
-        out_i = out_loc[:,i]
-        lane = [int(round((loc + 0.5) * 1280.0 / (griding_num - 1))) if loc != griding_num else -2 for loc in out_i]
-        lanes.append(lane)
-    return np.array(lanes)
+    return loss_dict
 
-def mask_2_inter(mask, row_anchor, num_lanes=4):
+def get_metric_dict(cfg):
 
-    all_idx = np.zeros((num_lanes, len(row_anchor)))
-
-    for i, r in enumerate(row_anchor):
-        label_r = np.asarray(mask)[int(round(r))]
-        for lane_idx in range(1, num_lanes + 1):
-            pos = np.where(label_r == lane_idx)[0]
-            # pos = np.where(label_r == color_list[lane_idx])[0]
-            if len(pos) == 0:
-                all_idx[lane_idx - 1, i] = -1
-                continue
-            pos = np.mean(pos)
-            all_idx[lane_idx - 1, i] = pos
-
-    return all_idx
+    metric_dict = {
+        'name': ['top1', 'top2', 'top3'],
+        'op': [MultiLabelAcc(), AccTopk(cfg.griding_num, 2), AccTopk(cfg.griding_num, 3)],
+        'data_src': [('cls_out', 'cls_label'), ('cls_out', 'cls_label'), ('cls_out', 'cls_label')]
+    }
+    
+    return metric_dict
 
 
-class LaneEval(object):
-    pixel_thresh = 6
-    pt_thresh = 0.85
+def get_metric_dict_seg(cfg):
 
-    @staticmethod
-    def line_accuracy(pred, gt, thresh):
-        pred = np.array([p if p >= 0 else -100 for p in pred])
-        gt = np.array([g if g >= 0 else -100 for g in gt])
-        return np.sum(np.where(np.abs(pred - gt) < thresh, 1., 0.)) / len(gt)
+    metric_dict = {
+        'name': ['iou'],
+        'op': [Metric_mIoU(cfg.num_lanes+1)],
+        'data_src': [('seg_out', 'seg_label')]
+    }
 
-    @staticmethod
-    def bench(pred, gt, y_samples):
-        # embed()
-        if any(len(p) != len(y_samples) for p in pred):
-            raise Exception('Format of lanes error.')
+    return metric_dict
 
-        line_accs = []
-        fp, fn = 0., 0.
-        matched = 0.
-        for x_gts, x_preds in zip(gt, pred):
-            acc = LaneEval.line_accuracy(np.array(x_preds), np.array(x_gts), LaneEval.pixel_thresh)
-            if acc < LaneEval.pt_thresh:
-                fn += 1
-            else:
-                matched += 1
-            line_accs.append(acc)
-        fp = len(pred) - matched
-        if len(gt) > 4 and fn > 0:
-            fn -= 1
-        s = sum(line_accs)
-        if len(gt) > 4:
-            s -= min(line_accs)
-        return s / max(min(4.0, len(gt)), 1.), fp / len(pred) if len(pred) > 0 else 0., fn / max(min(len(gt), 4.) , 1.)
+class MultiStepLR:
+    def __init__(self, optimizer, steps, gamma = 0.1, iters_per_epoch = None, warmup = None, warmup_iters = None):
+        self.warmup = warmup
+        self.warmup_iters = warmup_iters
+        self.optimizer = optimizer
+        self.steps = steps
+        self.steps.sort()
+        self.gamma = gamma
+        self.iters_per_epoch = iters_per_epoch
+        self.iters = 0
+        self.base_lr = [group['lr'] for group in optimizer.param_groups]
 
-    @staticmethod
-    def bench_all(preds, gts, y_samples):
-        accuracy, fp, fn = 0., 0., 0.
-        for pred, gt in zip(preds, gts):
-            try:
-                a, p, n = LaneEval.bench(pred, gt, y_samples)
-            except BaseException as e:
-                raise Exception('Format of lanes error.')
-            accuracy += a
-            fp += p
-            fn += n
-        num = len(gts)
-        send_text_to_telegram(BOT_TOKEN, CHAT_ID, str(accuracy / num))
-        send_text_to_telegram(BOT_TOKEN, CHAT_ID, str(fp / num))
-        send_text_to_telegram(BOT_TOKEN, CHAT_ID, str(fn / num))
-        return json.dumps([
-            {'name': 'Accuracy', 'value': accuracy / num, 'order': 'desc'},
-            {'name': 'FP', 'value': fp / num, 'order': 'asc'},
-            {'name': 'FN', 'value': fn / num, 'order': 'asc'}
-        ])
+    def step(self, external_iter = None):
+        self.iters += 1
+        if external_iter is not None:
+            self.iters = external_iter
+        if self.warmup == 'linear' and self.iters < self.warmup_iters:
+            rate = self.iters / self.warmup_iters
+            for group, lr in zip(self.optimizer.param_groups, self.base_lr):
+                group['lr'] = lr * rate
+            return
+        
+        # multi policy
+        if self.iters % self.iters_per_epoch == 0:
+            epoch = int(self.iters / self.iters_per_epoch)
+            power = -1
+            for i, st in enumerate(self.steps):
+                if epoch < st:
+                    power = i
+                    break
+            if power == -1:
+                power = len(self.steps)
+            # print(self.iters, self.iters_per_epoch, self.steps, power)
+            
+            for group, lr in zip(self.optimizer.param_groups, self.base_lr):
+                group['lr'] = lr * (self.gamma ** power)
+import math
+class CosineAnnealingLR:
+    def __init__(self, optimizer, T_max , eta_min = 0, warmup = None, warmup_iters = None):
+        self.warmup = warmup
+        self.warmup_iters = warmup_iters
+        self.optimizer = optimizer
+        self.T_max = T_max
+        self.eta_min = eta_min
 
-if __name__ == '__main__':
-    from data.constant import raildb_row_anchor
-    preds = np.random.randint(0, high=1280, size=(4, 4, len(raildb_row_anchor)))
-    gts = np.random.randint(0, high=1280, size=(4, 4, len(raildb_row_anchor)))
-    res = LaneEval.bench_all(preds, gts, raildb_row_anchor)
-    res = json.loads(res)
-    for r in res:
-        print(r['name'], r['value'])
+        self.iters = 0
+        self.base_lr = [group['lr'] for group in optimizer.param_groups]
+
+    def step(self, external_iter = None):
+        self.iters += 1
+        if external_iter is not None:
+            self.iters = external_iter
+        if self.warmup == 'linear' and self.iters < self.warmup_iters:
+            rate = self.iters / self.warmup_iters
+            for group, lr in zip(self.optimizer.param_groups, self.base_lr):
+                group['lr'] = lr * rate
+            return
+        
+        # cos policy
+
+        for group, lr in zip(self.optimizer.param_groups, self.base_lr):
+            group['lr'] = self.eta_min + (lr - self.eta_min) * (1 + math.cos(math.pi * self.iters / self.T_max)) / 2
+
+        
